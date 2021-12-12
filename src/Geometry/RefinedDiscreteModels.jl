@@ -7,12 +7,12 @@ function shift_to_first(v::Vector, i::T) where {T <: Int}
 end
 
 # TODO: under construction for sort_flag side in non-uniform mesh
-function sort_sort_flag_side(node::Vector, elem, NT)
+function sort_longest_edge_first!(node, elem, NT)
     edgelength = zeros(NT, 3)
     node = [[v[1], v[2]] for v in node]
     node = vcat(node'...)
     for i = 1:NT
-        elem_i = elem[i, :]
+        elem_i = elem[i][:]
         for (j, e) in enumerate(elem_i)
             arr = filter(x -> x != e, elem_i)
             diff = sqrt(sum((node[arr[1], :] - node[arr[2], :]).^2))
@@ -22,7 +22,7 @@ function sort_sort_flag_side(node::Vector, elem, NT)
     max_indices = findmax(edgelength, dims=2)[2]
     for i = 1:NT
         max_indices[i][2]
-        elem[i,:] = shift_to_first(elem[i,:], max_indices[i][2])
+        elem[i][:] = shift_to_first(elem[i][:], max_indices[i][2])
     end
     elem
 end
@@ -41,16 +41,18 @@ function setup_markers(NT, NE, node, elem, d2p, dualedge, η_arr, θ)
         index=1
         ct=ix[t]
         while (index==1)
-            base = d2p[elem[ct,2],elem[ct,3]]
+            base = d2p[elem[ct][2],elem[ct][3]]
             if marker[base]>0
                 index=0
             else
                 current = current + η_arr[ct]
                 N = size(node,1) + 1
-                marker[d2p[elem[ct,2],elem[ct,3]]] = N
-                midpoint = get_midpoint(node[elem[ct,[2 3],:]])
+                marker[d2p[elem[ct][2],elem[ct][3]]] = N
+                side_pt_idxs = [elem[ct][2], elem[ct][3]]
+                midpoint = get_midpoint(node[side_pt_idxs])
+                #midpoint = get_midpoint(node[elem[ct,[2 3],:]])
                 node = [node; midpoint]
-                ct = dualedge[elem[ct,3],elem[ct,2]]
+                ct = dualedge[elem[ct][3],elem[ct][2]]
                 if ct==0
                     index=0
                 end
@@ -61,16 +63,18 @@ function setup_markers(NT, NE, node, elem, d2p, dualedge, η_arr, θ)
 end
 
 function divide(elem,t,p)
-    elem = [elem; [p[4] p[3] p[1]]]
-    elem[t,:]=[p[4] p[1] p[2]]
+    #elem = [elem; [p[4] p[3] p[1]]]
+    elem = append_tables_globally(elem, Table([[p[4], p[3], p[1]]]))
+    #elem[t][:]=[p[4] p[1] p[2]]
+    elem[t] =[p[4] p[1] p[2]]
     elem
 end
 
 function bisect(d2p, elem, marker, NT)
     for t=1:NT
-        base = d2p[elem[t,2],elem[t,3]]
+        base = d2p[elem[t][2],elem[t][3]]
         if (marker[base]>0)
-            p = vcat(elem[t,:], marker[base])
+            p = vcat(elem[t][:], marker[base])
             elem=divide(elem,t,p)
             left=d2p[p[1],p[2]]; right=d2p[p[3],p[1]]
             if (marker[right]>0)
@@ -85,16 +89,20 @@ function bisect(d2p, elem, marker, NT)
 end
 
 function build_edges(elem)
-    edge = [elem[:,[1,2]]; elem[:,[1,3]]; elem[:,[2,3]]]
+    edge1 = [getindex.(elem, 1) getindex.(elem, 2)] 
+    edge2 = [getindex.(elem, 1) getindex.(elem, 3)] 
+    edge3 = [getindex.(elem, 2) getindex.(elem, 3)] 
+    edge = [edge1; edge2; edge3]
+    #edge = [elem[:,[1,2]]; elem[:,[1,3]]; elem[:,[2,3]]]
     unique(sort!(edge, dims=2), dims=1)
 end
 
 function build_directed_dualedge(elem, N, NT)
     dualedge = spzeros(Int64, N, N)
     for t=1:NT
-        dualedge[elem[t,1],elem[t,2]]=t
-        dualedge[elem[t,2],elem[t,3]]=t
-        dualedge[elem[t,3],elem[t,1]]=t
+        dualedge[elem[t][1],elem[t][2]]=t
+        dualedge[elem[t][2],elem[t][3]]=t
+        dualedge[elem[t][3],elem[t][1]]=t
     end
     dualedge
 end
@@ -111,7 +119,7 @@ function dual_to_primal(edge, NE, N)
 end
 
 function test_against_top(face, top::GridTopology, d::T) where {Ti, T <: Integer}
-    face_vec = sort.([face[i,:] for i in 1:size(face,1)])
+    face_vec = sort.([face[i][:] for i in 1:size(face,1)])
     face_top = sort.(get_faces(top, d, 0))
     issetequal_bitvec = issetequal(face_vec, face_top)
     @assert all(issetequal_bitvec)
@@ -133,13 +141,13 @@ function sort_ccw(cell_coords)
 end
 
 function sort_cell_node_ids_ccw(cell_node_ids, node_coords)
-    cell_node_ids_ccw = vcat(cell_node_ids'...)
-    #cell_node_ids_ccw = cell_node_ids
+    #cell_node_ids_ccw = vcat(cell_node_ids'...)
+    cell_node_ids_ccw = cell_node_ids
     #@show cell_node_ids_ccw
     for (i, cell) in enumerate(cell_node_ids)
         cell_coords = node_coords[cell]
         perm = sort_ccw(cell_coords)
-        cell_node_ids_ccw[i,:] = cell[perm]
+        cell_node_ids_ccw[i][:] = cell[perm]
     end
     cell_node_ids_ccw
 end
@@ -152,14 +160,14 @@ function newest_vertex_bisection(top::GridTopology, node_coords::Vector, cell_no
     elem = cell_node_ids
     NT = size(elem, 1)
     if sort_flag
-        elem = sort_sort_flag_side(node_coords, elem, NT)
+        elem = sort_longest_edge_first!(node_coords, elem, NT)
     end
     test_against_top(elem, top, 2)
     edge = build_edges(elem)
     NE = size(edge, 1)
     dualedge = build_directed_dualedge(elem, N, NT)
     d2p = dual_to_primal(edge, NE, N)
-    test_against_top(edge, top, 1)
+    #test_against_top(edge, top, 1)
     node_coords, marker = setup_markers(NT, NE, node_coords, elem, d2p, dualedge, η_arr, θ)
     cell_node_ids = bisect(d2p, elem, marker, NT)
     node_coords, cell_node_ids
