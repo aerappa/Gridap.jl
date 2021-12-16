@@ -25,31 +25,31 @@ function shift_to_first(v::Vector{Ti}, i::Ti) where {Ti<:Integer}
 end
 
 function sort_longest_edge!(
-    elem::Matrix{Ti},
+    elem::Table{Ti},
     node::Vector{<:VectorValue},
     NT::Ti,
 ) where {Ti<:Integer}
     edgelength = zeros(NT, 3)
     #node_v = [[v[1], v[2]] for v in node]
     #node_v = vcat(node_v'...)
-    for i = 1:NT
-        elem_i = elem[i, :]
-        for (j, e) in enumerate(elem_i)
-            arr = filter(x -> x != e, elem_i)
+    for t = 1:NT
+      elem_t = elem[t][:]
+        for (j, e) in enumerate(elem_t)
+            arr = filter(x -> x != e, elem_t)
             diff = sqrt(sum((node[arr[1]] - node[arr[2]]) .^ 2))
             #diff = sqrt(sum((node_v[arr[1], :] - node_v[arr[2], :]).^2))
-            edgelength[i, j] = diff
+            edgelength[t, j] = diff
         end
     end
     max_indices = findmax(edgelength, dims = 2)[2]
-    for i = 1:NT
-      elem[i, :] = shift_to_first(elem[i, :], Ti(max_indices[i][2]))
+    for t = 1:NT
+      elem[t][:] = shift_to_first(elem[t][:], Ti(max_indices[t][2]))
     end
 end
 
 function setup_markers_and_nodes!(
     node::Vector{<:VectorValue},
-    elem::Matrix{Ti},
+    elem::Table{Ti},
     d2p::SparseMatrixCSC{Ti,Ti},
     dualedge::SparseMatrixCSC{Ti},
     NE::Ti,
@@ -61,7 +61,7 @@ function setup_markers_and_nodes!(
   sorted_η_idxs = sortperm(-η_arr)
   marker = zeros(Ti, NE)
   # Loop over global triangle indices
-  for t_idx = sorted_η_idxs
+  for t = sorted_η_idxs
     if (partial_η > θ * total_η)
       break
     end
@@ -70,23 +70,25 @@ function setup_markers_and_nodes!(
     #ct = sorted_η_idxs[t]
     while (need_to_mark)
       # Base point
-      base = d2p[elem[t_idx, 2], elem[t_idx, 3]]
+      base = d2p[elem[t][2], elem[t][3]]
       # Already marked
       if marker[base] > 0
         need_to_mark = false
       else
         # Get the estimator contribution for the current triangle
-        partial_η = partial_η + η_arr[t_idx]
+        partial_η = partial_η + η_arr[t]
         # Increase the number of nodes to add new midpoint
         N = size(node, 1) + 1
         # The marker of the current elements is this node
-        marker[d2p[elem[t_idx, 2], elem[t_idx, 3]]] = N
+        marker[d2p[elem[t][2], elem[t][3]]] = N
         # Coordinates of new node
-        midpoint = get_midpoint(node[elem[t_idx, [2 3], :]])
+        elem2 = elem[t][2]
+        elem3 = elem[t][3]
+        midpoint = get_midpoint(node[[elem2, elem3], :])
         node = push!(node, midpoint)
-        t_idx = dualedge[elem[t_idx, 3], elem[t_idx, 2]]
+        t = dualedge[elem[t][3], elem[t][2]]
         # There is no dual edge here, go to next triangle index
-        if t_idx == 0
+        if t == 0
           need_to_mark = false
         end
       end
@@ -95,22 +97,22 @@ function setup_markers_and_nodes!(
   node, marker
 end
 
-function divide!(elem::Matrix{Ti}, t::Ti, p::Vector{Ti}) where {Ti <: Integer}
-  elem = [elem; [p[4] p[3] p[1]]]
-  elem[t, :] = [p[4] p[1] p[2]]
+function divide!(elem::Table{Ti}, t::Ti, p::Vector{Ti}) where {Ti <: Integer}
+  elem = append_tables_globally(elem, Table([[p[4], p[3], p[1]]]))
+  elem[t][:] = [p[4] p[1] p[2]]
   elem
 end
 
 function bisect(
     d2p::SparseMatrixCSC{Ti,Ti},
-    elem::Matrix{Ti},
+    elem::Table{Ti},
     marker::Vector{Ti},
     NT::Ti,
   ) where {Ti<:Integer}
   for t = UnitRange{Ti}(1:NT)
-    base = d2p[elem[t, 2], elem[t, 3]]
+    base = d2p[elem[t][2], elem[t][3]]
     if (marker[base] > 0)
-      p = vcat(elem[t, :], marker[base])
+      p = push!(elem[t, :][1], marker[base])
       elem = divide!(elem, t, p)
       left = d2p[p[1], p[2]]
       right = d2p[p[3], p[1]]
@@ -126,17 +128,24 @@ function bisect(
   elem
 end
 
-function build_edges(elem::Matrix{<:Integer})
-  edge = [elem[:, [1, 2]]; elem[:, [1, 3]]; elem[:, [2, 3]]]
+function build_edges(elem::Table{Ti}) where {Ti <: Integer}
+  edge = zeros(Ti, 3*length(elem), 2)
+  for t = 1:length(elem)
+    off = 3*(t-1)
+    edge[off+1,:] = [elem[t][1] elem[t][2]]
+    edge[off+2, :] = [elem[t][1] elem[t][3]]
+    edge[off+3, :] = [elem[t][2] elem[t][3]]
+  end
+  #edge = [elem[:, [1, 2]]; elem[:, [1, 3]]; elem[:, [2, 3]]]
   unique(sort!(edge, dims = 2), dims = 1)
 end
 
-function build_directed_dualedge(elem::Matrix{Ti}, N::Ti, NT::Ti) where {Ti <: Integer}
+function build_directed_dualedge(elem::Table{Ti}, N::Ti, NT::Ti) where {Ti <: Integer}
   dualedge = spzeros(Ti, N, N)
   for t = 1:NT
-    dualedge[elem[t, 1], elem[t, 2]] = t
-    dualedge[elem[t, 2], elem[t, 3]] = t
-    dualedge[elem[t, 3], elem[t, 1]] = t
+    dualedge[elem[t][1], elem[t][2]] = t
+    dualedge[elem[t][2], elem[t][3]] = t
+    dualedge[elem[t][3], elem[t][1]] = t
   end
   dualedge
 end
@@ -152,12 +161,20 @@ function dual_to_primal(edge::Matrix{Ti}, NE::Ti, N::Ti) where {Ti <: Integer}
   d2p
 end
 
+function test_against_top(face::Table{<:Integer}, top::GridTopology, d::Integer)
+  face_vec = sort.([face[i][:] for i = 1:size(face, 1)])
+  face_top = sort.(get_faces(top, d, 0))
+  issetequal_bitvec = issetequal(face_vec, face_top)
+  @assert all(issetequal_bitvec)
+end
+
 function test_against_top(face::Matrix{<:Integer}, top::GridTopology, d::Integer)
   face_vec = sort.([face[i, :] for i = 1:size(face, 1)])
   face_top = sort.(get_faces(top, d, 0))
   issetequal_bitvec = issetequal(face_vec, face_top)
   @assert all(issetequal_bitvec)
 end
+
 
 function get_midpoint(ngon::AbstractArray{<:VectorValue})
   sum(ngon) / length(ngon)
@@ -181,13 +198,13 @@ function sort_cell_node_ids_ccw(
     cell_node_ids::Table{<:Integer},
     node_coords::Vector{<:VectorValue},
   )
-  cell_node_ids_ccw = vcat(cell_node_ids'...)
-  #cell_node_ids_ccw = cell_node_ids
+  #cell_node_ids_ccw = vcat(cell_node_ids'...)
+  cell_node_ids_ccw = cell_node_ids
   #@show cell_node_ids_ccw
   for (i, cell) in enumerate(cell_node_ids)
     cell_coords = node_coords[cell]
     perm = sort_ccw(cell_coords)
-    cell_node_ids_ccw[i, :] = cell[perm]
+    cell_node_ids_ccw[i][:] = cell[perm]
   end
   cell_node_ids_ccw
 end
@@ -198,7 +215,7 @@ node_coords == node, cell_node_ids == elem in Long Chen's notation
 function newest_vertex_bisection(
   top::GridTopology,
   node_coords::Vector,
-  cell_node_ids::Matrix{Ti},
+  cell_node_ids::Table{Ti},
   η_arr::Vector{<:AbstractFloat},
   θ::AbstractFloat,
   sort_flag::Bool,
@@ -239,12 +256,12 @@ function newest_vertex_bisection(
   if sort_flag
     cell_node_ids_ccw = sort_cell_node_ids_ccw(cell_node_ids, node_coords)
   else
-    cell_node_ids_ccw = vcat(cell_node_ids'...)
+    cell_node_ids_ccw = cell_node_ids
   end
   node_coords_ref, cell_node_ids_ref =
     newest_vertex_bisection(top, node_coords, cell_node_ids_ccw, η_arr, θ, sort_flag)
   # TODO: Should not convert to matrix and back to Table
-  cell_node_ids_ref = Table([c for c in eachrow(cell_node_ids_ref)])
+  #cell_node_ids_ref = Table([c for c in eachrow(cell_node_ids_ref)])
   reffes = get_reffes(grid)
   cell_types = get_cell_type(grid)
   # TODO : Gracefully handle cell_types
@@ -287,7 +304,7 @@ function build_refined_models(
   model_refs[1] = newest_vertex_bisection(model, η_arr; sort_flag = true, θ = θ)
   for i = 1:(Nsteps - 1)
     cell_map = get_cell_map(get_triangulation(model_refs[i]))
-    ncells = length(cell_map)
+    @show ncells = length(cell_map)
     η_arr = compute_estimator(est, ncells)
     model_refs[i + 1] =
       newest_vertex_bisection(model_refs[i], η_arr; sort_flag = false, θ = θ)
