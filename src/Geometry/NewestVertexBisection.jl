@@ -8,9 +8,8 @@
 using SparseArrays
 using Random
 using AbstractTrees
-using TimerOutputs
 
-const to = TimerOutput()
+global firsttime = true
 
 # The following was taken directly from Tim Holy's example at
 # https://github.com/JuliaCollections/AbstractTrees.jl/blob/master/examples/binarytree_core.jl
@@ -335,10 +334,11 @@ function _bisect(
 ) where {T<:Integer}
   forest = Vector{BinaryNode}()
   for t in UnitRange{T}(1:NT)
-    base = d2p[elem[t][2], elem[t][3]]
+    elemt = elem[t]
+    base = d2p[elemt[2], elemt[3]]
     if (markers[base] > 0)
       newnode = BinaryNode(t)
-      p = vcat(elem[t][:], markers[base])
+      p = vcat(elemt, markers[base])
       elem = _divide!(elem, t, p)
       cur_size::T = size(elem, 1)
       # l and r are BinaryNodes for building forest
@@ -373,14 +373,16 @@ function _bisect(
 end
 
 function _build_edges(elem::AbstractVector{<:AbstractVector{T}}) where {T<:Integer}
-  edge = zeros(T, 3 * length(elem), 2)
-  for t = 1:length(elem)
-    off = 3 * (t - 1)
-    edge[off+1, :] = [elem[t][1] elem[t][2]]
-    edge[off+2, :] = [elem[t][1] elem[t][3]]
-    edge[off+3, :] = [elem[t][2] elem[t][3]]
-  end
-  edge = unique(sort!(edge, dims = 2), dims = 1)
+  #edge = zeros(T, 3 * length(elem), 2)
+  elem1 = hcat(elem...)'
+  edge= [ elem1[:,[1,2]]; elem1[:,[1,3]];  elem1[:,[2,3]]]
+  #@assert edge1 == edge
+  #(r, c) = size(edge)
+  #@time for e = 1:r
+  #  sort!(@view edge[e,:])
+  #end
+  sort!(edge, dims = 2)
+  edge = unique(edge, dims = 1)
 end
 
 function duplicate(T, xs, n)
@@ -400,42 +402,17 @@ function _build_directed_dualedge(
 ) where {T<:Integer}
   #dualedge = spzeros(T, N, N)
   elem1 = hcat(elem...)'
-  @timeit to "i vcat" i = vcat(elem1[:, [1,2,3]]...)
-  @timeit to "j vcat" j = vcat(elem1[:, [2,3,1]]...)
-  @timeit to  "duplicate" v = duplicate(T, 1:NT, 3)
-  @timeit to "sparse" sparse(i, j, v)
-  #dualedge=sparse(elem1[:,[1,2,3]],elem1[:,[2,3,1]], [1:NT,1:NT,1:NT],N,N);
-  #elem_cache = array_cache(elem)
-  #for t = 1:NT
-  #  elemt = getindex!(elem_cache, elem, t)
-  #  #@show elemt
-  #  dualedge[elemt[1], elemt[2]] = t
-  #  #@show elemt[1], elemt[2]
-  #  dualedge[elemt[2], elemt[3]] = t
-  #  #@show elemt[2], elemt[3]
-  #  dualedge[elemt[3], elemt[1]] = t
-  #  #@show elemt[3], elemt[1]
-  #end
-  #dualedge
+  i = vcat(elem1[:, [1,2,3]]...)
+  j = vcat(elem1[:, [2,3,1]]...)
+  v = duplicate(T, 1:NT, 3)
+  sparse(i, j, v)
 end
 
 function _dual_to_primal(edge::Matrix{T}, NE::T, N::T) where {T<:Integer}
-  d2p = spzeros(T, T, N, N)
-  #d2p=sparse(edge(:,[1,2]),edge(:,[2,1]),[1:NE,1:NE],N,N);
   i = vcat(edge[:, [1,2]]...)
   j = vcat(edge[:, [2,1]]...)
-  #v = duplicate(1:NE, 2)
-  @timeit to "repeat" v = T.(repeat(1:NE, 2))
+  v = T.(repeat(1:NE, 2))
   sparse(i, j, v)
-  #for k = 1:NE
-  #  i = edge[k, 1]
-  #  @show i
-  #  j = edge[k, 2]
-  #  @show j
-  #  d2p[i, j] = k
-  #  d2p[j, i] = k
-  #end
-  #d2p
 end
 
 function _is_against_top(face::Table{<:Integer}, top::GridTopology, d::Integer)
@@ -518,18 +495,22 @@ function newest_vertex_bisection(
   NT::T = size(elem, 1)
   @assert length(η_arr) == NT
   # Long Chen terminology
-  @timeit to "build edges" edge = _build_edges(elem)
+  println("build_edges")
+  #@time edge = _build_edges(elem)
+  edge = _build_edges(elem)
   NE::T = size(edge, 1)
   # Long Chen terminology
-  @timeit to "dualedge" dualedge = _build_directed_dualedge(elem, N, NT)
+  dualedge = _build_directed_dualedge(elem, N, NT)
   #@time dualedge = _build_directed_dualedge(elem, N, NT)
-  @timeit to "dual to primal" d2p = _dual_to_primal(edge, NE, N)
-  @timeit to "markers and node" node_coords, markers =
+  d2p = _dual_to_primal(edge, NE, N)
+  node_coords, markers =
     _setup_markers_and_nodes!(node_coords, elem, d2p, dualedge, NE, η_arr, θ)
   # For performance since we need to push! to elem
   elem = Vector{Vector}(elem)
-  @timeit to "bisect" cell_node_ids, forest = _bisect(d2p, elem, markers, NT)
-  @timeit to "node_to_bis_edge" node_to_bis_edge = _markers_to_node_to_bis_edge(markers, edge)
+  cell_node_ids, forest = _bisect(d2p, elem, markers, NT)
+  #println("bisect")
+  #@time cell_node_ids, forest = _bisect(d2p, elem, markers, NT)
+  node_to_bis_edge = _markers_to_node_to_bis_edge(markers, edge)
   node_coords, cell_node_ids, forest, node_to_bis_edge
 end
 
@@ -553,15 +534,14 @@ necessary. It maps
 function newest_vertex_bisection(grid::Grid, η_arr::AbstractArray, θ::AbstractFloat)
   node_coords = get_node_coordinates(grid)
   # Need "un lazy" version for resize!
-  node_coords = [v for v in node_coords]
   #@show cell_node_ids = get_cell_node_ids(grid)
   cell_node_ids = get_cell_node_ids(grid)
   # Convert from Table to Vector{Vector}
   cell_node_ids = [v for v in cell_node_ids]
   # Should always sort on the first iteration
   _sort_cell_node_ids_ccw!(cell_node_ids, node_coords)
-   _sort_longest_edge!(cell_node_ids, node_coords)
-  node_coords_ref, cell_node_ids_unsort, forest, node_to_bis_edge =
+  _sort_longest_edge!(cell_node_ids, node_coords)
+   node_coords_ref, cell_node_ids_unsort, forest, node_to_bis_edge =
     newest_vertex_bisection(node_coords, cell_node_ids, η_arr, θ)
   reffes = get_reffes(grid)
   cell_types = get_cell_type(grid)
@@ -655,13 +635,12 @@ function newest_vertex_bisection(
   θ = 1.0, # corresponds to uniform refinement
 )
   println("buffer")
-  reset_timer!(to)
-  #enable_timer!(to)
+  #disable_timer!(to)
   @assert length(η_arr) == num_cells(model)
   grid = get_grid(model)
   grid_ref_unsort = buffer.grid_ref_unsort
   topo = GridTopology(grid)
-  @timeit to "newest_vertex_bisection" grid_ref, buffer, forest, node_to_bis_edge =
+  grid_ref, buffer, forest, node_to_bis_edge =
     newest_vertex_bisection(grid_ref_unsort, η_arr, θ)
   topo_ref = GridTopology(grid_ref)
   #@timeit to "create_d_to_dface" 
@@ -675,6 +654,5 @@ function newest_vertex_bisection(
   #labels_ref = _propogate_labeling(model, d_to_dface_to_olddim, d_to_dface_to_oldid)
   labels_ref = FaceLabeling(topo_ref) 
   model_ref = DiscreteModel(grid_ref, topo_ref, labels_ref)
-  @show to
   model_ref, buffer
 end

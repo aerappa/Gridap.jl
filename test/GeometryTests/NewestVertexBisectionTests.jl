@@ -41,11 +41,12 @@ function make_nvb_levels(
     ncells = length(cell_map)
     #@show ncells
     η_arr = compute_estimator(est, ncells)
-    model_refs[i + 1], buffer =
+    @time model_refs[i + 1], buffer =
       newest_vertex_bisection(model_refs[i], buffer, η_arr; θ = θ)
     trian_ref = Triangulation(model_refs[i + 1])
     node_coords = get_node_coordinates(trian_ref)
     @show length(node_coords)
+    GC.gc()
   # Necessary to have each level stored seperately
   buffer = deepcopy(buffer)
   end
@@ -68,7 +69,7 @@ domain = (0, 1, 0, 1)
 n₀ = 6
 @show n₀
 partition = (2^n₀, 2^n₀) # Initial partition
-Nsteps = 5
+Nsteps = 7
 est = ConstantEst(1.0)
 θ = 1.0
 uniform_write_to_vtk = false
