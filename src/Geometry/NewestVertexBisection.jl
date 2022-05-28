@@ -8,6 +8,9 @@
 using SparseArrays
 using Random
 using AbstractTrees
+using TimerOutputs
+
+const to = TimerOutput()
 
 # The following was taken directly from Tim Holy's example at
 # https://github.com/JuliaCollections/AbstractTrees.jl/blob/master/examples/binarytree_core.jl
@@ -380,29 +383,59 @@ function _build_edges(elem::AbstractVector{<:AbstractVector{T}}) where {T<:Integ
   edge = unique(sort!(edge, dims = 2), dims = 1)
 end
 
+function duplicate(T, xs, n)
+  ret = T[]
+  for x in xs
+    for i = 1:n
+      push!(ret, x)
+    end
+  end
+  ret
+end
+
 function _build_directed_dualedge(
   elem::AbstractVector{<:AbstractVector{T}},
   N::T,
   NT::T,
 ) where {T<:Integer}
-  dualedge = spzeros(T, N, N)
-  for t = 1:NT
-    dualedge[elem[t][1], elem[t][2]] = t
-    dualedge[elem[t][2], elem[t][3]] = t
-    dualedge[elem[t][3], elem[t][1]] = t
-  end
-  dualedge
+  #dualedge = spzeros(T, N, N)
+  elem1 = hcat(elem...)'
+  @timeit to "i vcat" i = vcat(elem1[:, [1,2,3]]...)
+  @timeit to "j vcat" j = vcat(elem1[:, [2,3,1]]...)
+  @timeit to  "duplicate" v = duplicate(T, 1:NT, 3)
+  @timeit to "sparse" sparse(i, j, v)
+  #dualedge=sparse(elem1[:,[1,2,3]],elem1[:,[2,3,1]], [1:NT,1:NT,1:NT],N,N);
+  #elem_cache = array_cache(elem)
+  #for t = 1:NT
+  #  elemt = getindex!(elem_cache, elem, t)
+  #  #@show elemt
+  #  dualedge[elemt[1], elemt[2]] = t
+  #  #@show elemt[1], elemt[2]
+  #  dualedge[elemt[2], elemt[3]] = t
+  #  #@show elemt[2], elemt[3]
+  #  dualedge[elemt[3], elemt[1]] = t
+  #  #@show elemt[3], elemt[1]
+  #end
+  #dualedge
 end
 
 function _dual_to_primal(edge::Matrix{T}, NE::T, N::T) where {T<:Integer}
   d2p = spzeros(T, T, N, N)
-  for k = 1:NE
-    i = edge[k, 1]
-    j = edge[k, 2]
-    d2p[i, j] = k
-    d2p[j, i] = k
-  end
-  d2p
+  #d2p=sparse(edge(:,[1,2]),edge(:,[2,1]),[1:NE,1:NE],N,N);
+  i = vcat(edge[:, [1,2]]...)
+  j = vcat(edge[:, [2,1]]...)
+  #v = duplicate(1:NE, 2)
+  @timeit to "repeat" v = T.(repeat(1:NE, 2))
+  sparse(i, j, v)
+  #for k = 1:NE
+  #  i = edge[k, 1]
+  #  @show i
+  #  j = edge[k, 2]
+  #  @show j
+  #  d2p[i, j] = k
+  #  d2p[j, i] = k
+  #end
+  #d2p
 end
 
 function _is_against_top(face::Table{<:Integer}, top::GridTopology, d::Integer)
@@ -485,17 +518,18 @@ function newest_vertex_bisection(
   NT::T = size(elem, 1)
   @assert length(η_arr) == NT
   # Long Chen terminology
-  edge = _build_edges(elem)
+  @timeit to "build edges" edge = _build_edges(elem)
   NE::T = size(edge, 1)
   # Long Chen terminology
-  dualedge = _build_directed_dualedge(elem, N, NT)
-  d2p = _dual_to_primal(edge, NE, N)
-  node_coords, markers =
+  @timeit to "dualedge" dualedge = _build_directed_dualedge(elem, N, NT)
+  #@time dualedge = _build_directed_dualedge(elem, N, NT)
+  @timeit to "dual to primal" d2p = _dual_to_primal(edge, NE, N)
+  @timeit to "markers and node" node_coords, markers =
     _setup_markers_and_nodes!(node_coords, elem, d2p, dualedge, NE, η_arr, θ)
   # For performance since we need to push! to elem
   elem = Vector{Vector}(elem)
-  cell_node_ids, forest = _bisect(d2p, elem, markers, NT)
-  node_to_bis_edge = _markers_to_node_to_bis_edge(markers, edge)
+  @timeit to "bisect" cell_node_ids, forest = _bisect(d2p, elem, markers, NT)
+  @timeit to "node_to_bis_edge" node_to_bis_edge = _markers_to_node_to_bis_edge(markers, edge)
   node_coords, cell_node_ids, forest, node_to_bis_edge
 end
 
@@ -526,7 +560,7 @@ function newest_vertex_bisection(grid::Grid, η_arr::AbstractArray, θ::Abstract
   cell_node_ids = [v for v in cell_node_ids]
   # Should always sort on the first iteration
   _sort_cell_node_ids_ccw!(cell_node_ids, node_coords)
-  _sort_longest_edge!(cell_node_ids, node_coords)
+   _sort_longest_edge!(cell_node_ids, node_coords)
   node_coords_ref, cell_node_ids_unsort, forest, node_to_bis_edge =
     newest_vertex_bisection(node_coords, cell_node_ids, η_arr, θ)
   reffes = get_reffes(grid)
@@ -571,19 +605,21 @@ function newest_vertex_bisection(
   η_arr::AbstractArray;
   θ = 1.0, # corresponds to uniform refinement
 )
+  println("no buffer")
   @assert length(η_arr) == num_cells(model)
   grid = get_grid(model)
   topo = GridTopology(grid)
   grid_ref, buffer, forest, node_to_bis_edge = newest_vertex_bisection(grid, η_arr, θ)
   topo_ref = GridTopology(grid_ref)
-  d_to_dface_to_olddim, d_to_dface_to_oldid = _create_d_to_dface_to_old(
-    forest,
-    topo,
-    topo_ref,
-    get_node_coordinates(grid_ref),
-    node_to_bis_edge,
-  )
-  labels_ref = _propogate_labeling(model, d_to_dface_to_olddim, d_to_dface_to_oldid)
+  #d_to_dface_to_olddim, d_to_dface_to_oldid = _create_d_to_dface_to_old(
+  #  forest,
+  #  topo,
+  #  topo_ref,
+  #  get_node_coordinates(grid_ref),
+  #  node_to_bis_edge,
+  #)
+  #labels_ref = _propogate_labeling(model, d_to_dface_to_olddim, d_to_dface_to_oldid)
+  labels_ref = FaceLabeling(topo_ref)
   DiscreteModel(grid_ref, topo_ref, labels_ref), buffer
 end
 
@@ -618,21 +654,27 @@ function newest_vertex_bisection(
   η_arr::AbstractArray;
   θ = 1.0, # corresponds to uniform refinement
 )
+  println("buffer")
+  reset_timer!(to)
+  #enable_timer!(to)
   @assert length(η_arr) == num_cells(model)
   grid = get_grid(model)
   grid_ref_unsort = buffer.grid_ref_unsort
   topo = GridTopology(grid)
-  grid_ref, buffer, forest, node_to_bis_edge =
+  @timeit to "newest_vertex_bisection" grid_ref, buffer, forest, node_to_bis_edge =
     newest_vertex_bisection(grid_ref_unsort, η_arr, θ)
   topo_ref = GridTopology(grid_ref)
-  d_to_dface_to_olddim, d_to_dface_to_oldid = _create_d_to_dface_to_old(
-    forest,
-    topo,
-    topo_ref,
-    get_node_coordinates(grid_ref),
-    node_to_bis_edge,
-  )
-  labels_ref = _propogate_labeling(model, d_to_dface_to_olddim, d_to_dface_to_oldid)
+  #@timeit to "create_d_to_dface" 
+  #d_to_dface_to_olddim, d_to_dface_to_oldid = _create_d_to_dface_to_old(
+  #  forest,
+  #  topo,
+  #  topo_ref,
+  #  get_node_coordinates(grid_ref),
+  #  node_to_bis_edge,
+  #)
+  #labels_ref = _propogate_labeling(model, d_to_dface_to_olddim, d_to_dface_to_oldid)
+  labels_ref = FaceLabeling(topo_ref) 
   model_ref = DiscreteModel(grid_ref, topo_ref, labels_ref)
+  @show to
   model_ref, buffer
 end

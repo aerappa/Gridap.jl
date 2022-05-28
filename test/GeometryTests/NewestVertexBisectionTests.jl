@@ -36,11 +36,16 @@ function make_nvb_levels(
   model_refs[1], buffer = newest_vertex_bisection(model, η_arr; θ = θ)
   buffer = deepcopy(buffer)
   for i = 1:(Nsteps - 1)
+    @show i
     cell_map = get_cell_map(get_triangulation(model_refs[i]))
     ncells = length(cell_map)
+    #@show ncells
     η_arr = compute_estimator(est, ncells)
     model_refs[i + 1], buffer =
       newest_vertex_bisection(model_refs[i], buffer, η_arr; θ = θ)
+    trian_ref = Triangulation(model_refs[i + 1])
+    node_coords = get_node_coordinates(trian_ref)
+    @show length(node_coords)
   # Necessary to have each level stored seperately
   buffer = deepcopy(buffer)
   end
@@ -60,8 +65,10 @@ compute_estimator(est::RandomEst, ncells) = rand(ncells)
 compute_estimator(est::ConstantEst, ncells) = fill(est.val, ncells)
 
 domain = (0, 1, 0, 1)
-partition = (1, 1) # Initial partition
-Nsteps = 10
+n₀ = 6
+@show n₀
+partition = (2^n₀, 2^n₀) # Initial partition
+Nsteps = 5
 est = ConstantEst(1.0)
 θ = 1.0
 uniform_write_to_vtk = false
@@ -76,32 +83,32 @@ let model = simplexify(CartesianDiscreteModel(domain, partition))
     # Combinatorial checks for cells
     let cell_map = get_cell_map(trian_ref)
       ncells = length(cell_map)
-      @test ncells == 2^(n + 1)
+      @test ncells == 2^(2*n₀ + n + 1)
     end
     # Combinatorial checks for nodes
-    let node_coords = get_node_coordinates(trian_ref)
-      ncoords = length(node_coords)
-      if isodd(n)
-        ncoords_true = Int(2 * (4^((n - 1) / 2) + 2^((n - 1) / 2)) + 1)
-      else
-        ncoords_true = Int(2^(n / 2) + 1)^2
-      end
-      @test ncoords_true == ncoords
-    end
+    #let node_coords = get_node_coordinates(trian_ref)
+    #  ncoords = length(node_coords)
+    #  if isodd(n)
+    #    ncoords_true = Int(2 * (4^((n - 1) / 2) + 2^((n - 1) / 2)) + 1)
+    #  else
+    #    ncoords_true = Int(2^(n / 2) + 1)^2
+    #  end
+    #  @test ncoords_true == ncoords
+    #end
     # Test labels are propogating properly
-    let labels = get_face_labeling(model_ref)
-      let d = 0
-        @test Int(4*2^(floor(n / 2))) == d_get_num_boundary_labels(labels, d)
-      end
-      # Combinatorial check for face_labels (edge)
-      let d = 1
-        @test Int(4*2^(floor(n / 2))) == d_get_num_boundary_labels(labels, d)
-      end
-      # Combinatorial check for cell labels
-      let d = 2
-        @test 0 == d_get_num_boundary_labels(labels, d)
-      end
-    end
+    #let labels = get_face_labeling(model_ref)
+    #  let d = 0
+    #    @test Int(4*2^(floor(n / 2))) == d_get_num_boundary_labels(labels, d)
+    #  end
+    #  # Combinatorial check for face_labels (edge)
+    #  let d = 1
+    #    @test Int(4*2^(floor(n / 2))) == d_get_num_boundary_labels(labels, d)
+    #  end
+    #  # Combinatorial check for cell labels
+    #  let d = 2
+    #    @test 0 == d_get_num_boundary_labels(labels, d)
+    #  end
+    #end
   end
 end
 
