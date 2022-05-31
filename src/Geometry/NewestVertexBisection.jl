@@ -534,6 +534,7 @@ necessary. It maps
 function newest_vertex_bisection(grid::Grid, η_arr::AbstractArray, θ::AbstractFloat)
   node_coords = get_node_coordinates(grid)
   # Need "un lazy" version for resize!
+  node_coords = [v for v in node_coords]
   #@show cell_node_ids = get_cell_node_ids(grid)
   cell_node_ids = get_cell_node_ids(grid)
   # Convert from Table to Vector{Vector}
